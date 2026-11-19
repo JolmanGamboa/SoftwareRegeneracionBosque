@@ -4,9 +4,18 @@ namespace TablaEjemplo
     {
         static readonly string[] Columnas =
         {
-            "Fruto inicial", "Frutos comidos del árbol", "Semillas x árbol",
-            "% Semillas comidas", "% Semillas germinadas", "% Plántulas que sobreviven"
+            "Fruto inicial", "Frutos comidos del árbol", "Frutos que quedan", "Semillas x árbol", "Total semillas",
+            "% Semillas comidas", "Semillas comidas", "Semillas que quedan",
+            "% Semillas germinadas", "Semillas que germinan",
+            "% Plántulas que sobreviven", "Plántulas que sobreviven"
         };
+
+        // Columnas calculadas (bloqueadas para el usuario).
+        static readonly HashSet<int> Calculadas = new() { 2, 4, 6, 7, 9, 11 };
+        // Columnas de entrada, en el orden de MiTupla.
+        static readonly int[] Entradas = { 0, 1, 3, 5, 8, 10 };
+
+        const string MsgComidos = "los frutos comidos tienen que ser menores a los iniciales";
 
         readonly RadioButton rbQuemados = new() { Text = "Usar datos quemados", AutoSize = true, Checked = true };
         readonly RadioButton rbManual = new() { Text = "Ingresar datos manualmente", AutoSize = true };
@@ -28,7 +37,7 @@ namespace TablaEjemplo
 
             ConfigurarGrid(gridDatos, Columnas, soloLectura: true);
             ConfigurarGrid(gridMuestras, new[] { "Proceso" }.Concat(Columnas).ToArray(), soloLectura: true);
-            ConfigurarGrid(gridMedidas, new[] { "Variable", "Promedio", "Varianza", "Des. Estándar", "Error Estándar", "Rango (Min - Max)" }, soloLectura: true);
+            ConfigurarGrid(gridMedidas, new[] { "Variable", "Promedio", "Varianza", "Des. Estándar", "Error Estándar", "Rango (Prom − Error, Prom + Error)" }, soloLectura: true);
 
             var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, Padding = new Padding(10) };
             layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -58,6 +67,9 @@ namespace TablaEjemplo
             rbManual.CheckedChanged += (_, _) => CambiarModo();
             btnGenerarTabla.Click += (_, _) => GenerarCasillas((int)nudTuplas.Value);
             btnEjecutar.Click += (_, _) => Ejecutar();
+            gridDatos.CellValueChanged += (_, e) => { if (e.RowIndex >= 0 && !Calculadas.Contains(e.ColumnIndex)) RecalcularFila(gridDatos.Rows[e.RowIndex]); };
+            gridDatos.CellValidating += ValidarComidos;
+            gridDatos.CellBeginEdit += (_, e) => { if (Calculadas.Contains(e.ColumnIndex)) e.Cancel = true; };
 
             CambiarModo();
         }
@@ -80,6 +92,15 @@ namespace TablaEjemplo
             g.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
             g.BackgroundColor = SystemColors.Window;
             foreach (var c in columnas) g.Columns.Add(c, c);
+
+            // Las columnas calculadas se bloquean y se muestran en gris.
+            foreach (DataGridViewColumn col in g.Columns)
+            {
+                if (!Columnas.Contains(col.HeaderText) || !Calculadas.Contains(Array.IndexOf(Columnas, col.HeaderText))) continue;
+                col.ReadOnly = true;
+                col.DefaultCellStyle.BackColor = SystemColors.Control;
+                col.DefaultCellStyle.Format = "0.##";
+            }
 
             // Las columnas que empiezan con "%" se muestran con el símbolo después del número.
             foreach (DataGridViewColumn col in g.Columns)
@@ -111,6 +132,8 @@ namespace TablaEjemplo
             bool manual = rbManual.Checked;
             lblCantidad.Enabled = nudTuplas.Enabled = btnGenerarTabla.Enabled = manual;
             gridDatos.ReadOnly = !manual;
+            // Asignar ReadOnly a la grilla desbloquea todas las columnas: se vuelven a bloquear las calculadas.
+            foreach (int c in Calculadas) gridDatos.Columns[c].ReadOnly = true;
 
             if (manual)
             {
@@ -126,8 +149,60 @@ namespace TablaEjemplo
         {
             gridDatos.Rows.Clear();
             foreach (var t in DatosQuemados())
-                gridDatos.Rows.Add(t.FrutoInicial, t.FrutoComidoArbol, t.SemillasXArbol,
-                    t.SemillasComidas, t.SemillasGerminadas, t.PlantulasSobreviven);
+                gridDatos.Rows.Add(FilaCompleta(t));
+        }
+
+        static double Num(object? v) => double.TryParse(v?.ToString()?.Trim().TrimEnd('%'), out var d) ? d : double.NaN;
+
+        // Valida que frutos comidos <= frutos iniciales al editar cualquiera de las dos casillas.
+        void ValidarComidos(object? sender, DataGridViewCellValidatingEventArgs e)
+        {
+            if (e.ColumnIndex != 0 && e.ColumnIndex != 1) return;
+            var fila = gridDatos.Rows[e.RowIndex];
+            double nuevo = Num(e.FormattedValue);
+            double ini = e.ColumnIndex == 0 ? nuevo : Num(fila.Cells[0].Value);
+            double com = e.ColumnIndex == 1 ? nuevo : Num(fila.Cells[1].Value);
+            if (!double.IsNaN(ini) && !double.IsNaN(com) && com > ini)
+            {
+                MessageBox.Show(MsgComidos, "Dato inválido", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                e.Cancel = true;
+                gridDatos.CancelEdit();
+            }
+        }
+
+        // Calcula las columnas derivadas a partir de una tupla de entrada.
+        static object[] FilaCompleta(MiTupla t)
+        {
+            double quedan = t.FrutoInicial - t.FrutoComidoArbol;
+            double total = quedan * t.SemillasXArbol;
+            double comidas = total * t.SemillasComidas / 100.0;
+            double sQuedan = total - comidas;
+            double germinan = sQuedan * t.SemillasGerminadas / 100.0;
+            double plantulas = germinan * t.PlantulasSobreviven / 100.0;
+            return new object[]
+            {
+                t.FrutoInicial, t.FrutoComidoArbol, quedan, t.SemillasXArbol, total,
+                t.SemillasComidas, comidas, sQuedan,
+                t.SemillasGerminadas, germinan, t.PlantulasSobreviven, plantulas
+            };
+        }
+
+        void RecalcularFila(DataGridViewRow fila)
+        {
+            var v = Entradas.Select(i => Num(fila.Cells[i].Value)).ToArray();
+            object?[] calc;
+            if (v.Any(double.IsNaN)) calc = new object?[6];
+            else
+            {
+                var f = FilaCompleta(new MiTupla
+                {
+                    FrutoInicial = (int)v[0], FrutoComidoArbol = (int)v[1], SemillasXArbol = (int)v[2],
+                    SemillasComidas = (int)v[3], SemillasGerminadas = (int)v[4], PlantulasSobreviven = (int)v[5]
+                });
+                calc = Calculadas.OrderBy(i => i).Select(i => f[i]).ToArray();
+            }
+            int k = 0;
+            foreach (int i in Calculadas.OrderBy(i => i)) fila.Cells[i].Value = calc[k++];
         }
 
         // Ajusta la cantidad de filas conservando lo ya escrito.
@@ -156,14 +231,21 @@ namespace TablaEjemplo
                 var v = new int[6];
                 for (int c = 0; c < 6; c++)
                 {
-                    var txt = fila.Cells[c].Value?.ToString()?.Trim();
+                    int col = Entradas[c];
+                    var txt = fila.Cells[col].Value?.ToString()?.Trim();
                     if (!int.TryParse(txt, out v[c]))
                     {
-                        gridDatos.CurrentCell = fila.Cells[c];
-                        MessageBox.Show($"Casilla inválida o vacía: fila {fila.Index + 1}, \"{Columnas[c]}\".\nIngrese un número entero.",
+                        gridDatos.CurrentCell = fila.Cells[col];
+                        MessageBox.Show($"Casilla inválida o vacía: fila {fila.Index + 1}, \"{Columnas[col]}\".\nIngrese un número entero.",
                             "Datos incompletos", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                         return null;
                     }
+                }
+                if (v[1] > v[0])
+                {
+                    gridDatos.CurrentCell = fila.Cells[1];
+                    MessageBox.Show(MsgComidos, "Dato inválido", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return null;
                 }
                 tabla.Add(new MiTupla
                 {
@@ -188,6 +270,7 @@ namespace TablaEjemplo
             var random = new Random();
             int n = (int)nudProcesos.Value;
             var muestras = new List<MiTupla>();
+            var filas = new List<object?[]>();
             gridMuestras.Rows.Clear();
 
             for (int i = 1; i <= n; i++)
@@ -202,24 +285,23 @@ namespace TablaEjemplo
                     PlantulasSobreviven = tabla[random.Next(tabla.Count)].PlantulasSobreviven
                 };
                 muestras.Add(m);
-                gridMuestras.Rows.Add($"#{i}", m.FrutoInicial, m.FrutoComidoArbol, m.SemillasXArbol,
-                    m.SemillasComidas, m.SemillasGerminadas, m.PlantulasSobreviven);
+                // Si "Frutos que quedan" es negativo, esa columna y todas las siguientes quedan en blanco.
+                var f = FilaCompleta(m).Select(x => (object?)x).ToArray();
+                if (m.FrutoComidoArbol > m.FrutoInicial)
+                    for (int c = 2; c < f.Length; c++) f[c] = null;
+                filas.Add(f);
+                gridMuestras.Rows.Add(new object?[] { $"#{i}" }.Concat(f).ToArray()!);
             }
 
-            var medidas = new (string, MedidasDispersion)[]
-            {
-                ("Frutos iniciales", Program.CalcularMedidas(muestras.Select(m => m.FrutoInicial))),
-                ("Frutos comidos del árbol", Program.CalcularMedidas(muestras.Select(m => m.FrutoComidoArbol))),
-                ("Semillas x árbol", Program.CalcularMedidas(muestras.Select(m => m.SemillasXArbol))),
-                ("% Semillas comidas", Program.CalcularMedidas(muestras.Select(m => m.SemillasComidas))),
-                ("% Semillas germinadas", Program.CalcularMedidas(muestras.Select(m => m.SemillasGerminadas))),
-                ("% Plántulas que sobreviven", Program.CalcularMedidas(muestras.Select(m => m.PlantulasSobreviven)))
-            };
-
             gridMedidas.Rows.Clear();
-            foreach (var (nombre, m) in medidas)
-                gridMedidas.Rows.Add(nombre, m.Promedio.ToString("F2"), m.Varianza.ToString("F2"),
+            for (int c = 0; c < Columnas.Length; c++)
+            {
+                var datos = filas.Where(f => f[c] != null).Select(f => Convert.ToDouble(f[c]));
+                var m = Program.CalcularMedidas(datos);
+                if (m == null) gridMedidas.Rows.Add(Columnas[c], "N/A", "N/A", "N/A", "N/A", "N/A");
+                else gridMedidas.Rows.Add(Columnas[c], m.Promedio.ToString("F2"), m.Varianza.ToString("F2"),
                     m.DesEstandar.ToString("F2"), m.ErrorEstandar.ToString("F4"), m.Rango);
+            }
         }
     }
 }

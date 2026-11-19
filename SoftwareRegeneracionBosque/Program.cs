@@ -42,11 +42,12 @@
         }
 
         // Cálculo de medidas
-        public static MedidasDispersion CalcularMedidas(IEnumerable<int> datos)
+        public static MedidasDispersion? CalcularMedidas(IEnumerable<double> datos)
         {
             var lista = datos.ToList();
+            if (lista.Count < 2) return null; // varianza muestral requiere n >= 2
             double promedio = lista.Average();
-            double varianza = lista.Select(x => Math.Pow(x - promedio, 2)).Average();
+            double varianza = lista.Select(x => Math.Pow(x - promedio, 2)).Sum() / (lista.Count - 1);
             double desEstandar = Math.Sqrt(varianza);
             double errorEstandar = desEstandar / Math.Sqrt(lista.Count);
 
@@ -56,7 +57,7 @@
                 Varianza = varianza,
                 DesEstandar = desEstandar,
                 ErrorEstandar = errorEstandar,
-                Rango = $"({lista.Min()} - {lista.Max()})"
+                Rango = $"({promedio - errorEstandar:0.##} - {promedio + errorEstandar:0.##})"
             };
         }
     }
