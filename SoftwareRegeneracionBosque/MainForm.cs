@@ -10,7 +10,7 @@ namespace TablaEjemplo
 
         readonly RadioButton rbQuemados = new() { Text = "Usar datos quemados", AutoSize = true, Checked = true };
         readonly RadioButton rbManual = new() { Text = "Ingresar datos manualmente", AutoSize = true };
-        readonly Label lblCantidad = new() { Text = "Cantidad de tuplas (filas):", AutoSize = true, Anchor = AnchorStyles.Left };
+        readonly Label lblCantidad = new() { Text = "Cantidad de resgistros:", AutoSize = true, Anchor = AnchorStyles.Left };
         readonly NumericUpDown nudTuplas = new() { Minimum = 1, Maximum = 1000, Value = 6, Width = 70 };
         readonly Button btnGenerarTabla = new() { Text = "Crear casillas", AutoSize = true };
         readonly DataGridView gridDatos = new();
@@ -80,6 +80,30 @@ namespace TablaEjemplo
             g.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
             g.BackgroundColor = SystemColors.Window;
             foreach (var c in columnas) g.Columns.Add(c, c);
+
+            // Las columnas que empiezan con "%" se muestran con el símbolo después del número.
+            foreach (DataGridViewColumn col in g.Columns)
+            {
+                if (!col.HeaderText.StartsWith("%")) continue;
+                col.ValueType = typeof(int);
+                col.DefaultCellStyle.Format = "0'%'";
+            }
+
+            // Permite escribir "30" o "30%"; el símbolo se quita antes de convertir.
+            g.CellParsing += (_, e) =>
+            {
+                if (e.Value is string s && g.Columns[e.ColumnIndex].HeaderText.StartsWith("%"))
+                {
+                    s = s.Trim().TrimEnd('%').Trim();
+                    if (int.TryParse(s, out int n)) { e.Value = n; e.ParsingApplied = true; }
+                }
+            };
+            g.DataError += (_, e) =>
+            {
+                MessageBox.Show("Ingrese un número entero.", "Dato inválido", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                e.ThrowException = false;
+                e.Cancel = false;
+            };
         }
 
         void CambiarModo()
